@@ -1,0 +1,11 @@
+## Requirements
+
+```
+streamlit
+simpy
+geopandas
+geopy
+pandas
+shapely
+folium
+```
