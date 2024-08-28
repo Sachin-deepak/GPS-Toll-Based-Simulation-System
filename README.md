@@ -27,20 +27,6 @@ This is a Streamlit application that simulates a GPS toll-based system. The appl
    streamlit run app.py
    ```
 
-## Requirements
-
-Below are the required dependencies for this project, which should be included in the `requirements.txt` file:
-
-```
-streamlit
-simpy
-geopandas
-geopy
-pandas
-shapely
-folium
-```
-
 ## Usage
 
 1. Select the vehicle type from the dropdown menu.
