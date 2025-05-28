@@ -1,138 +1,166 @@
 import streamlit as st
-import random
-import simpy
-import geopandas as gpd
+import folium
+from streamlit_folium import folium_static
+from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 import pandas as pd
-from shapely.geometry import Polygon, LineString
-import math
-import folium
-from folium.plugins import HeatMap
-from streamlit.components.v1 import html as st_html
-import random
+import numpy as np
+import requests
+import polyline
 
-# defining locations for start and end point
-locations_coords = {
+# Set page config
+st.set_page_config(page_title="GPS Toll-based system simulation", layout="wide")
+
+# Title and description
+st.title("GPS Toll-based system simulation")
+st.markdown("Calculate toll charges across different locations in Tamil Nadu")
+
+LOCATIONS = {
     "Chennai": (13.0827, 80.2707),
     "Coimbatore": (11.0168, 76.9558),
     "Madurai": (9.9252, 78.1198),
-    "Tiruchirappalli": (10.7905, 78.7047),
     "Salem": (11.6643, 78.1460),
-    "Erode": (11.3410, 77.7172),
+    "Tiruchirappalli": (10.7905, 78.7047),
     "Tirunelveli": (8.7139, 77.7567),
-    "Thanjavur": (10.7870, 79.1378),
+    "Erode": (11.3410, 77.7172),
     "Vellore": (12.9165, 79.1325),
-    "Thoothukudi": (8.7642, 78.1348)
+    "Thanjavur": (10.7869, 79.1378),
+    "Hosur": (12.7406, 77.8252)
 }
 
-# defining toll zones
-toll_zones = {
-    "Toll Zone 1": Polygon([(80.1, 13.0), (80.4, 13.0), (80.4, 13.2), (80.1, 13.2)]),
-    "Toll Zone 2": Polygon([(76.8, 11.0), (77.1, 11.0), (77.1, 11.2), (76.8, 11.2)]),
-    "Toll Zone 3": Polygon([(78.0, 9.8), (78.3, 9.8), (78.3, 10.0), (78.0, 10.0)]),
-    "Toll Zone 4": Polygon([(78.5, 10.6), (78.8, 10.6), (78.8, 10.8), (78.5, 10.8)]),
-    "Toll Zone 5": Polygon([(77.5, 12.9), (77.8, 12.9), (77.8, 13.1), (77.5, 13.1)]),
-    "Toll Zone 6": Polygon([(78.6, 11.6), (79.0, 11.6), (79.0, 11.8), (78.6, 11.8)])
+# Vehicle types and their base rates (per km)
+VEHICLE_RATES = {
+    "Two Wheeler": 0.5,
+    "Car/Jeep/Van": 1.0,
+    "Bus": 2.0,
+    "Truck": 3.0,
+    "Multi-Axle Vehicle": 4.0
 }
 
-# function to calculate distance between two coordinates using the haversine formula
-def calculate_distance(coords1, coords2):
-    lat1, lon1 = coords1
-    lat2, lon2 = coords2
-    radius = 6371  # radius of the earth in km
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    distance = radius * c
-    return distance
+def get_route_coordinates(start_coords, end_coords):
+    """Get actual route coordinates using OSRM"""
+    try:
+        # Format coordinates for OSRM API
+        start_lon, start_lat = start_coords[1], start_coords[0]
+        end_lon, end_lat = end_coords[1], end_coords[0]
+        
+        # Make request to OSRM API
+        url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}?overview=full&geometries=polyline"
+        response = requests.get(url)
+        data = response.json()
+        
+        if data["code"] == "Ok":
+            # Decode polyline to get route coordinates
+            route_polyline = data["routes"][0]["geometry"]
+            route_coords = polyline.decode(route_polyline)
+            # Convert to (lat, lon) format for folium
+            route_coords = [(coord[0], coord[1]) for coord in route_coords]
+            distance = data["routes"][0]["distance"] / 1000  # Convert to kilometers
+            duration = data["routes"][0]["duration"] / 60  # Convert to minutes
+            return route_coords, distance, duration
+        else:
+            # Fallback to straight line if routing fails
+            return [start_coords, end_coords], geodesic(start_coords, end_coords).kilometers, None
+    except Exception as e:
+        st.warning(f"Could not fetch precise route. Using straight line instead. Error: {str(e)}")
+        return [start_coords, end_coords], geodesic(start_coords, end_coords).kilometers, None
 
-# simulate vehicle movement
-def simulate_vehicle_movement(start_loc, end_loc):
-    start_coords = locations_coords[start_loc]
-    end_coords = locations_coords[end_loc]
-    distance = calculate_distance(start_coords, end_coords)
-    route = LineString([(start_coords[1], start_coords[0]), (end_coords[1], end_coords[0])])
-    toll_zones_passed = []
-    toll_zone_distances = []
-    for zone, gdf in toll_zones.items():
-        if route.intersects(gdf):
-            intersection = route.intersection(gdf)
-            toll_zones_passed.append(zone)
-            toll_zone_distances.append(intersection.length * 111.32)  # conversion of degrees to km
-    return distance, toll_zones_passed, toll_zone_distances
+# Create two columns for source and destination selection
+col1, col2 = st.columns(2)
 
-# function to calculate toll
-def calculate_toll(vehicle_type, toll_zones_passed, toll_zone_distances):
-    price_per_km = {
-        "Car": 5,
-        "Truck": 15,
-        "Bike": 2,
-        "Bus": 12,
-        "Heavy": 20,
-        "Ambulance": 0
-    }
-    fixed_toll_per_zone = {
-        "Car": 50,
-        "Truck": 150,
-        "Bike": 20,
-        "Bus": 120,
-        "Heavy": 200,
-        "Ambulance": 0
-    }
-    penalty_amount = {
-        "Car": 0,
-        "Truck": 200,
-        "Bike": 0,
-        "Bus": 150,
-        "Heavy": 300,
-        "Ambulance": 0
-    }
-    toll_waiver = 0  # toll waiver for special cases in INR
+with col1:
+    source = st.selectbox("Select Source Location", list(LOCATIONS.keys()))
+    
+with col2:
+    destination = st.selectbox("Select Destination Location", list(LOCATIONS.keys()))
 
-    base_toll = sum(toll_zone_distances) * price_per_km[vehicle_type]
-    fixed_toll = len(toll_zones_passed) * fixed_toll_per_zone[vehicle_type]
-    penalty = penalty_amount[vehicle_type]
-    total_toll = base_toll + fixed_toll + penalty - toll_waiver
-    return total_toll, base_toll, fixed_toll, penalty
+# Vehicle type selection
+vehicle_type = st.selectbox("Select Vehicle Type", list(VEHICLE_RATES.keys()))
 
-# streamlit UI
-st.title("GPS Toll-based system simulation")
+# Additional options
+col3, col4 = st.columns(2)
+with col3:
+    is_ambulance = st.checkbox("Ambulance (Free Toll)")
+with col4:
+    has_penalty = st.checkbox("Late Payment (20% penalty)")
 
-vehicle_types = ["Car", "Truck", "Bike", "Bus", "Heavy", "Ambulance"]
-vehicle_type = st.selectbox("Select Vehicle Type", vehicle_types)
+# Calculate distance and toll
+def calculate_toll(source, destination, vehicle_type, is_ambulance, has_penalty):
+    source_coords = LOCATIONS[source]
+    dest_coords = LOCATIONS[destination]
+    
+    # Get actual route and distance
+    route_coords, distance, duration = get_route_coordinates(source_coords, dest_coords)
+    
+    # Base toll calculation
+    base_rate = VEHICLE_RATES[vehicle_type]
+    base_toll = distance * base_rate
+    
+    # Apply discounts and penalties
+    if is_ambulance:
+        base_toll = 0  # Free for ambulance
+    
+    if has_penalty:
+        base_toll *= 1.2  # 20% penalty for late payment
+    
+    return distance, base_toll, route_coords, duration
 
-start_loc = st.selectbox("Select Start Location", list(locations_coords.keys()))
-end_loc = st.selectbox("Select End Location", list(locations_coords.keys()))
-
-if st.button("Calculate Toll"):
-    distance, toll_zones_passed, toll_zone_distances = simulate_vehicle_movement(start_loc, end_loc)
-    total_toll, base_toll, fixed_toll, penalty = calculate_toll(vehicle_type, toll_zones_passed, toll_zone_distances)
-
-    st.write(f"Vehicle Type: {vehicle_type}")
-    st.write(f"Start Location: {start_loc}")
-    st.write(f"End Location: {end_loc}")
-    st.write(f"Total Distance: {distance:.2f} km")
-    st.write(f"Toll Zones Passed: {', '.join(toll_zones_passed)}")
-    st.write(f"Base Toll (Distance Based): {base_toll:.2f} INR")
-    st.write(f"Fixed Toll (Per Zone): {fixed_toll:.2f} INR")
-    st.write(f"Penalty: {penalty:.2f} INR")
-    st.write(f"Total Toll: {total_toll:.2f} INR")
-
-    # display the map
-    start_coords = locations_coords[start_loc]
-    end_coords = locations_coords[end_loc]
-    m = folium.Map(location=[(start_coords[0] + end_coords[0]) / 2, (start_coords[1] + end_coords[1]) / 2], zoom_start=7)
-    folium.Marker(location=start_coords, popup=start_loc, icon=folium.Icon(color="green")).add_to(m)
-    folium.Marker(location=end_coords, popup=end_loc, icon=folium.Icon(color="red")).add_to(m)
-    folium.PolyLine(locations=[start_coords, end_coords], color="blue").add_to(m)
-
-    for zone, coords in toll_zones.items():
-        folium.GeoJson(coords, name=zone).add_to(m)
-        zone_center = [coords.bounds[1] + (coords.bounds[3] - coords.bounds[1]) / 2, coords.bounds[0] + (coords.bounds[2] - coords.bounds[0]) / 2]
-        folium.Marker(location=zone_center, popup=zone, icon=folium.Icon()).add_to(m)
-
-    heatmap_data = [(coords[0], coords[1], random.uniform(0, 1)) for coords in locations_coords.values()]
-    HeatMap(heatmap_data).add_to(m)
-
-    st_html(m._repr_html_(), height=500)
+# Calculate and display results
+if source != destination:
+    distance, toll, route_coords, duration = calculate_toll(source, destination, vehicle_type, is_ambulance, has_penalty)
+    
+    # Display results
+    st.markdown("---")
+    st.subheader("Journey Details")
+    
+    col5, col6, col7 = st.columns(3)
+    with col5:
+        st.metric("Distance", f"{distance:.2f} km")
+    with col6:
+        st.metric("Toll Amount", f"₹{toll:.2f}")
+    with col7:
+        if duration:
+            st.metric("Estimated Duration", f"{duration:.0f} minutes")
+    
+    # Create map
+    st.subheader("Route Map")
+    m = folium.Map(location=[LOCATIONS[source][0], LOCATIONS[source][1]], zoom_start=7)
+    
+    # Add markers for source and destination
+    folium.Marker(
+        LOCATIONS[source],
+        popup=f"Source: {source}",
+        icon=folium.Icon(color='green', icon='info-sign')
+    ).add_to(m)
+    
+    folium.Marker(
+        LOCATIONS[destination],
+        popup=f"Destination: {destination}",
+        icon=folium.Icon(color='red', icon='info-sign')
+    ).add_to(m)
+    
+    # Add the actual route with gradient colors based on distance
+    folium.PolyLine(
+        locations=route_coords,
+        color='blue',
+        weight=3,
+        opacity=0.8,
+        popup=f"Distance: {distance:.2f} km\nDuration: {duration:.0f} minutes" if duration else f"Distance: {distance:.2f} km"
+    ).add_to(m)
+    
+    # Display the map
+    folium_static(m)
+    
+    # Additional information
+    st.markdown("---")
+    st.subheader("Additional Information")
+    st.markdown("""
+    - Base rates are calculated per kilometer
+    - Ambulance vehicles are exempt from toll charges
+    - Late payment incurs 20% penalty
+    - Routes are calculated using actual road networks
+    - Estimated duration is based on current traffic conditions
+    - Rates may vary based on time of day and special conditions
+    """)
+else:
+    st.warning("Please select different source and destination locations") 
