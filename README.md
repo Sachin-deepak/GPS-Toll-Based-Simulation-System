@@ -10,7 +10,7 @@ This is a Streamlit application that simulates a GPS toll-based system. The appl
 - Supports different vehicle types including cars, trucks, bikes, buses, and ambulances.
 
 ## Screenshots
-![Screenshot 2025-05-28 111715](https://github.com/user-attachments/assets/1b10dfcb-2fb4-4110-88f9-ac713f68d1be)
+![image](https://github.com/user-attachments/assets/d9aca67f-97e9-4ede-84ff-c77ec5b16508)
 ![Screenshot 2025-05-28 111724](https://github.com/user-attachments/assets/45aaf04f-b3af-4e02-9382-1bdc77a66c31)
 ![Screenshot 2025-05-28 111734](https://github.com/user-attachments/assets/ecb9b740-5d5b-44c6-8869-40e8a5c6644a)
 ![Screenshot 2025-05-28 111749](https://github.com/user-attachments/assets/91236116-5ded-4145-b047-4ee85d1ad343)
