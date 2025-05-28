@@ -2,10 +2,12 @@
 
 ```
 streamlit
-simpy
-geopandas
+folium
 geopy
 pandas
-shapely
-folium
+numpy
+protobuf
+streamlit-folium
+requests
+polyline
 ```
